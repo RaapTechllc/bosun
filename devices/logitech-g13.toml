@@ -1,0 +1,40 @@
+id = "logitech-g13"
+class = "A"
+
+[match]
+vid = 0x046D
+pid = 0xC21C
+usage_page = 0xFF00
+
+[caps]
+keys = [
+  "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9", "G10", "G11",
+  "G12", "G13", "G14", "G15", "G16", "G17", "G18", "G19", "G20", "G21", "G22",
+  "BD", "L1", "L2", "L3", "L4", "M1", "M2", "M3", "MR", "LEFT", "DOWN", "TOP"
+]
+
+[[caps.axes]]
+id = "stick-x"
+byte = 1
+bits = 8
+
+[[caps.axes]]
+id = "stick-y"
+byte = 2
+bits = 8
+
+[caps.screen]
+width = 160
+height = 43
+storage_height = 48
+format = "1bpp-bands"
+report_id = 3
+padding = 31
+
+[caps.rgb]
+zones = 1
+report_id = 7
+
+[caps.leds]
+names = ["M1", "M2", "M3", "MR"]
+report_id = 5

@@ -1,0 +1,13 @@
+[package]
+name = "bosun-hid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hidapi.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true

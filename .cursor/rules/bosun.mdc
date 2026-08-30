@@ -1,0 +1,13 @@
+---
+description: Bosun locked architecture and current M1 scope
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Follow `AGENTS.md` and accepted ADRs. Work on M1 only.
+
+Never add libusb, WinUSB, Zadig, kext, kernel modules, GPL code, Tokio in `bosun-hid`, future crates, adapters, engine, GUI, injection, profiles, or control-plane code.
+
+Use the measured protocol in `docs/BOSUN-PLAN.md`, the corrected key-bit rules in `AGENTS.md`, a synchronous `Transport` abstraction, a scripted `MockTransport`, and strict test-first development. Do not consult GPL G13 repositories.
+
+Before reporting completion, run formatting, clippy with `-D warnings`, the full workspace test suite, and the relevant live-hardware acceptance test when hardware is required.
