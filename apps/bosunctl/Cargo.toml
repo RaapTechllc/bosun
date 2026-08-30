@@ -8,6 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-bosun-hid = { path = "../../crates/bosun-hid" }
+bosun-hid = { version = "=0.1.0", path = "../../crates/bosun-hid" }
 clap.workspace = true
 tracing-subscriber.workspace = true
