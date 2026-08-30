@@ -14,13 +14,14 @@ Implement:
 
 ## Required order
 
-1. Use strict RED-GREEN-REFACTOR for each behavior.
-2. Implement the smallest probe/watch path needed to test R1.
-3. With LGS running, physically press keys and confirm whether shared input reports arrive. If not, close LGS and repeat before changing the architecture.
-4. Capture raw 8-byte reports as fixtures for every control and the joystick envelope.
-5. Resolve physical LEFT/DOWN/TOP names and update `docs/hardware-notes.md`.
-6. Complete mock-backed tests, hot-plug recovery, and the M1 CLI.
-7. Run format, clippy with warnings denied, all tests, and hardware-gated tests.
+1. Verify `rustc -vV` reports `x86_64-pc-windows-msvc`; if Chocolatey's GNU shim wins PATH, run Cargo through rustup stable.
+2. Use strict RED-GREEN-REFACTOR for each behavior.
+3. Implement the smallest probe/watch path needed to test R1.
+4. With LGS running, physically press keys and confirm whether shared input reports arrive. If not, close LGS and repeat before changing the architecture.
+5. Capture raw 8-byte reports as fixtures for every control and the joystick envelope.
+6. Resolve physical LEFT/DOWN/TOP names and update `docs/hardware-notes.md`.
+7. Complete mock-backed tests, hot-plug recovery, and the M1 CLI.
+8. Run format, clippy with warnings denied, all tests, and hardware-gated tests.
 
 ## Prohibited
 

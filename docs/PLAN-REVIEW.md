@@ -26,6 +26,7 @@
 13. CI LCD golden rendering must be headless; use the simulator only for local interactive development.
 14. The LCD draw surface is 160×43 even though packing storage is 160×48; clear hidden rows on every report.
 15. macOS packaging must explain both Input Monitoring and Accessibility grants.
+16. The workstation has stale Chocolatey GNU Rust shims ahead of rustup on some shells. Cursor must use the rustup stable MSVC toolchain; verify `rustc -vV` reports `x86_64-pc-windows-msvc` before hardware work.
 
 ## M1 acceptance sequence
 

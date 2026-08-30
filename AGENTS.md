@@ -13,6 +13,7 @@ Implement **M1 only**. Do not add the engine, adapters, Tauri GUI, HTTP/WS contr
 - Profiles are declarative data. Future `shell.run` requires explicit consent.
 - Do not consult or paste from `khampf/g13`, `cavefish-dev/g13-driver`, or other GPL G13 source. Use only measured protocol facts in `docs/BOSUN-PLAN.md`.
 - Implement behavior test-first. Run fmt, clippy with warnings denied, and all tests before commit.
+- On Kyle's Windows workstation, ensure `C:\\Users\\Kyle\\.cargo\\bin` precedes Chocolatey's Rust shims. Plain Chocolatey `cargo` is an obsolete GNU toolchain; use the MSVC rustup toolchain (`rustup run stable cargo ...`) if the terminal PATH is wrong.
 
 ## Measured G13 protocol
 
