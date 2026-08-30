@@ -26,6 +26,11 @@ Implement **M1 only**. Do not add the engine, adapters, Tauri GUI, HTTP/WS contr
 - Match and open the enumerated HID path by VID/PID and usage page, not VID/PID alone.
 - First hardware action: run shared reads while LGS is active and physically press keys. If empty, quit LGS and retry before redesigning anything.
 
+## Market signals
+
+- Standing process: `docs/MARKET-WATCH.md`; evidence baseline: `docs/CODEX-MICRO-COMPLAINTS.md`.
+- A review or user idea never expands the current milestone silently. Material plan changes stop for Kyle's review.
+
 ## Later invariants to preserve
 
 - M4 loopback HTTP/WS requires a random per-install bearer token, Host and Origin validation, and no permissive CORS.
