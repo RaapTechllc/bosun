@@ -2,7 +2,7 @@
 
 ## Current scope
 
-Implement **M1 only**. Do not add the engine, adapters, Tauri GUI, HTTP/WS control plane, injection, profiles, or LCD widgets. Empty future crates are forbidden.
+Implement **M1 only**. Do not add the engine, adapters, Tauri GUI, HTTP/WS control plane, injection, profiles, or LCD widgets. Empty future crates are forbidden. M1 acceptance criteria are enumerated in `docs/PRD.md` §5.
 
 ## Locked constraints
 

@@ -13,4 +13,4 @@ Phase 0 is complete on live Windows hardware. The repository is prepared for **M
 - Do not consult or copy GPL G13 driver source. The measured protocol is documented in `docs/BOSUN-PLAN.md`.
 - Logitech Gaming Software may overwrite LCD/RGB output. The first M1 hardware test must determine whether shared input reads work while LGS is running.
 
-See `AGENTS.md`, `docs/PLAN-REVIEW.md`, and `docs/BOSUN-PLAN.md` before implementing.
+See `AGENTS.md`, `docs/PLAN-REVIEW.md`, and `docs/BOSUN-PLAN.md` before implementing. The product requirements, M1 acceptance criteria, and open owner decisions are in `docs/PRD.md`.
