@@ -31,14 +31,22 @@
 //! );
 //! ```
 
+pub mod codec;
+pub mod descriptor;
 pub mod device;
 pub mod error;
 pub mod hid;
 pub mod mock;
 pub mod transport;
 
+pub use codec::{
+    format_recorded_report, hidden_lcd_rows_are_zero, lcd_test_report, leds_feature_report,
+    parse_recorded_report, parse_recorded_reports, rgb_feature_report, Decoder, InputEvent,
+    INPUT_REPORT_LEN, LCD_REPORT_ID, LCD_REPORT_LEN, LED_REPORT_ID, RGB_REPORT_ID,
+};
+pub use descriptor::{load_descriptor, parse_descriptor, DeviceDescriptor, MatchCriteria};
 pub use device::{select, select_all, select_index, DeviceInfo, DeviceMatch};
-pub use error::{HidError, Result};
+pub use error::{CodecError, DescriptorError, HidError, Result};
 pub use hid::HidTransport;
 pub use mock::{MockTransport, ScriptedRead};
 pub use transport::{ReadOutcome, Transport};

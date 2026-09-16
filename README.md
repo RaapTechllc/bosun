@@ -4,7 +4,7 @@ Bosun turns the Logitech G13 into a cross-platform command console for AI coding
 
 ## Status
 
-Phase 0 is complete on live Windows hardware. The repository is prepared for **M1 only**: a synchronous HID transport, descriptor-driven G13 codec, mock transport, and `bosunctl device` commands.
+Phase 0 is complete on live Windows hardware. M1 software paths are mockable: a synchronous HID transport, a G13 TOML descriptor and codec, `MockTransport`, and `bosunctl device list|info|watch|record|rgb|leds|lcd test`. Live shared-input (AC-R1) is still pending a finger-on-key run.
 
 ## Non-negotiable boundaries
 
@@ -14,3 +14,17 @@ Phase 0 is complete on live Windows hardware. The repository is prepared for **M
 - Logitech Gaming Software may overwrite LCD/RGB output. The first M1 hardware test must determine whether shared input reads work while LGS is running.
 
 See `AGENTS.md`, `docs/PLAN-REVIEW.md`, and `docs/BOSUN-PLAN.md` before implementing. The product requirements, M1 acceptance criteria, and open owner decisions are in `docs/PRD.md`.
+
+## CLI
+
+Descriptor path defaults to `devices/logitech-g13.toml`.
+
+```text
+bosunctl device list --vid 0x046D --pid 0xC21C --usage-page 0xFF00
+bosunctl device info
+bosunctl device watch
+bosunctl device record --output capture.hex
+bosunctl device rgb 255 0 0
+bosunctl device leds 0x0F
+bosunctl device lcd test
+```

@@ -12,7 +12,17 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-New behavior follows RED-GREEN-REFACTOR. Hardware-only tests must be ignored by default and gated by `BOSUN_HW=1`.
+New behavior follows RED-GREEN-REFACTOR. Hardware-only tests must be ignored by default and gated by `BOSUN_HW=1`. Running `cargo test -- --ignored` without that variable must skip with a clear message and pass.
+
+## Windows MSVC toolchain (AC-13)
+
+Hardware runs and `windows-latest` CI use the MSVC rustup toolchain. Before any live G13 session, check:
+
+```text
+rustc -vV
+```
+
+The host line must be `x86_64-pc-windows-msvc`. On Kyle's workstation, `C:\Users\Kyle\.cargo\bin` must precede Chocolatey's Rust shims. If a GNU `cargo` wins PATH, use `rustup run stable cargo ...` instead. CI's `windows-latest` job asserts this host triple.
 
 ## Licensing and clean-room protocol
 

@@ -12,6 +12,7 @@ keys = [
   "G12", "G13", "G14", "G15", "G16", "G17", "G18", "G19", "G20", "G21", "G22",
   "BD", "L1", "L2", "L3", "L4", "M1", "M2", "M3", "MR", "LEFT", "DOWN", "TOP"
 ]
+ignored_key_bits = [22, 23, 36, 37, 38, 39]
 
 [[caps.axes]]
 id = "stick-x"
