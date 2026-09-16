@@ -24,9 +24,26 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Assert Windows MSVC host
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $info = rustc -vV | Out-String
+          if ($info -notmatch 'host: x86_64-pc-windows-msvc') {
+            throw "expected host x86_64-pc-windows-msvc, got:`n$info"
+          }
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
+      - name: bosun-hid has no Tokio
+        if: runner.os == 'Linux'
+        run: |
+          if cargo tree -p bosun-hid | grep -qi tokio; then
+            echo "tokio must not appear in bosun-hid" >&2
+            exit 1
+          fi
+      - name: Hardware tests skip without BOSUN_HW
+        run: cargo test -p bosun-hid --test hardware -- --ignored --nocapture
 
   supply-chain:
     runs-on: ubuntu-latest
