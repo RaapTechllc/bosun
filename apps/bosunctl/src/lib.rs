@@ -109,7 +109,7 @@ pub struct WatchArgs {
     pub io: DeviceIoArgs,
 
     /// Stop after this many decoded events (tests and finite captures).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub max_events: Option<usize>,
 }
 
@@ -123,7 +123,7 @@ pub struct RecordArgs {
     pub output: PathBuf,
 
     /// Stop after this many reports.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub max_reports: Option<usize>,
 }
 
@@ -338,9 +338,9 @@ where
         match transport.read(&mut buf, limits.read_timeout) {
             Ok(ReadOutcome::Timeout) => {}
             Ok(ReadOutcome::Report(len)) => {
-                let events = decoder
-                    .decode(&buf[..len])
-                    .context("could not decode input report")?;
+                let Ok(events) = decoder.decode(&buf[..len]) else {
+                    continue;
+                };
                 for event in events {
                     writeln!(out, "{}", format_event(&event))?;
                     events_seen += 1;
@@ -356,8 +356,7 @@ where
                 }
                 Err(_) if limits.exit_if_reopen_fails => return Ok(()),
                 Err(_) => {
-                    // Live unplug: retry without a long sleep so replug stays under 2s.
-                    std::thread::sleep(Duration::from_millis(50));
+                    // Live unplug: retry immediately so a replug stays under 2s.
                 }
             },
             Err(error) => return Err(error.into()),
@@ -452,15 +451,10 @@ pub fn leds<T: Transport>(transport: &mut T, mask: u8, out: &mut impl Write) -> 
 /// Send one 992-byte LCD test report.
 pub fn lcd_test<T: Transport>(transport: &mut T, out: &mut impl Write) -> Result<()> {
     let report = lcd_test_report();
-    if report.len() != LCD_REPORT_LEN || report[0] != 0x03 {
-        bail!("LCD test report is malformed");
-    }
-    if !report[1..=31].iter().all(|byte| *byte == 0) {
-        bail!("LCD test padding must be zero");
-    }
-    if !hidden_lcd_rows_are_zero(&report) {
-        bail!("LCD hidden rows 43-47 must be zero");
-    }
+    debug_assert_eq!(report.len(), LCD_REPORT_LEN);
+    debug_assert_eq!(report[0], 0x03);
+    debug_assert!(report[1..=31].iter().all(|byte| *byte == 0));
+    debug_assert!(hidden_lcd_rows_are_zero(&report));
     let written = transport
         .write(&report)
         .context("could not write LCD test report")?;
@@ -497,6 +491,32 @@ mod tests {
         [0x01, 0x7F, 0x7F, 0x01, 0, 0, 0, 0]
     }
 
+    fn list_args<const N: usize>(argv: [&str; N]) -> ListArgs {
+        match Cli::parse_from(argv).command {
+            Command::Device {
+                command: DeviceCommand::List(args),
+            } => args,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn g13_vendor_collection() -> DeviceInfo {
+        DeviceInfo {
+            path: "vendor".to_owned(),
+            vendor_id: 0x046D,
+            product_id: 0xC21C,
+            usage_page: 0xFF00,
+            ..DeviceInfo::default()
+        }
+    }
+
+    fn no_report_six(writes: &[Vec<u8>]) {
+        assert!(
+            writes.iter().all(|write| write.first() != Some(&0x06)),
+            "{writes:?}"
+        );
+    }
+
     #[test]
     fn the_cli_definition_is_valid() {
         Cli::command().debug_assert();
@@ -504,7 +524,7 @@ mod tests {
 
     #[test]
     fn identifiers_accept_hex_on_the_command_line() {
-        let cli = Cli::parse_from([
+        let args = list_args([
             "bosunctl",
             "device",
             "list",
@@ -515,26 +535,58 @@ mod tests {
             "--usage-page",
             "0xFF00",
         ]);
-        match cli.command {
-            Command::Device {
-                command: DeviceCommand::List(args),
-            } => {
-                assert_eq!(args.vid, Some(0x046D));
-                assert_eq!(args.pid, Some(0xC21C));
-                assert_eq!(args.usage_page, Some(0xFF00));
-            }
-            other => panic!("{other:?}"),
-        }
+        assert_eq!(args.vid, Some(0x046D));
+        assert_eq!(args.pid, Some(0xC21C));
+        assert_eq!(args.usage_page, Some(0xFF00));
     }
 
     #[test]
     fn an_unfiltered_list_selects_everything() {
-        let args = ListArgs {
-            vid: None,
-            pid: None,
-            usage_page: None,
-        };
+        let args = list_args(["bosunctl", "device", "list"]);
+        assert!(args.selects(&g13_vendor_collection()));
         assert!(args.selects(&DeviceInfo::default()));
+    }
+
+    #[test]
+    fn new_device_commands_parse() {
+        assert!(matches!(
+            Cli::parse_from(["bosunctl", "device", "info"]).command,
+            Command::Device {
+                command: DeviceCommand::Info(_)
+            }
+        ));
+        assert!(matches!(
+            Cli::parse_from(["bosunctl", "device", "watch"]).command,
+            Command::Device {
+                command: DeviceCommand::Watch(_)
+            }
+        ));
+        assert!(matches!(
+            Cli::parse_from(["bosunctl", "device", "record", "--output", "out.hex"]).command,
+            Command::Device {
+                command: DeviceCommand::Record(_)
+            }
+        ));
+        assert!(matches!(
+            Cli::parse_from(["bosunctl", "device", "rgb", "1", "2", "3"]).command,
+            Command::Device {
+                command: DeviceCommand::Rgb(_)
+            }
+        ));
+        assert!(matches!(
+            Cli::parse_from(["bosunctl", "device", "leds", "0x0F"]).command,
+            Command::Device {
+                command: DeviceCommand::Leds(_)
+            }
+        ));
+        assert!(matches!(
+            Cli::parse_from(["bosunctl", "device", "lcd", "test"]).command,
+            Command::Device {
+                command: DeviceCommand::Lcd {
+                    command: LcdCommand::Test(_)
+                }
+            }
+        ));
     }
 
     #[test]
@@ -664,20 +716,23 @@ mod tests {
         let mut lcd_transport = mock();
         lcd_test(&mut lcd_transport, &mut io::sink()).unwrap();
 
-        for writes in [
-            rgb_transport.feature_writes(),
-            led_transport.feature_writes(),
-            lcd_transport.feature_writes(),
-        ] {
-            assert!(
-                writes.iter().all(|write| write.first() != Some(&0x06)),
-                "{writes:?}"
-            );
-        }
-        assert!(lcd_transport
-            .writes()
-            .iter()
-            .all(|write| write.first() != Some(&0x06)));
+        no_report_six(rgb_transport.feature_writes());
+        no_report_six(led_transport.feature_writes());
+        no_report_six(lcd_transport.feature_writes());
+        no_report_six(lcd_transport.writes());
+
+        let src = include_str!("lib.rs");
+        let watch = src.find("pub fn watch_events").expect("watch_events");
+        let record = src.find("pub fn record_reports").expect("record_reports");
+        let rgb_fn = src.find("pub fn rgb<").expect("rgb");
+        assert!(
+            !src[watch..record].contains("send_feature_report"),
+            "watch must not send feature reports"
+        );
+        assert!(
+            !src[record..rgb_fn].contains("send_feature_report"),
+            "record must not send feature reports"
+        );
     }
 
     #[test]

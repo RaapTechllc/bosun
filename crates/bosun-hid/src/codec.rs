@@ -329,16 +329,7 @@ mod tests {
             let mut report = rest();
             report[byte] |= mask;
             let events = decoder.decode(&report).unwrap();
-            let key_events: Vec<_> = events
-                .iter()
-                .filter(|event| {
-                    matches!(event, InputEvent::KeyDown { .. } | InputEvent::KeyUp { .. })
-                })
-                .collect();
-            assert!(
-                key_events.is_empty(),
-                "bit {bit} produced key events: {events:?}"
-            );
+            assert!(events.is_empty(), "bit {bit} produced events: {events:?}");
             decoder.decode(&rest()).unwrap();
         }
     }

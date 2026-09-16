@@ -1,7 +1,8 @@
 //! `bosunctl` — the Bosun control CLI.
 //!
 //! M1 scope. Device identity comes from a TOML descriptor or explicit
-//! match flags; no product identifiers are compiled in.
+//! match flags. The default descriptor path is the committed G13 data file;
+//! VID/PID are not compiled into this binary.
 
 use anyhow::Result;
 use bosunctl::{run, Cli};

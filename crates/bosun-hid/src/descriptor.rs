@@ -132,8 +132,13 @@ pub fn parse_descriptor(text: &str) -> std::result::Result<DeviceDescriptor, Des
 fn validate(raw: RawDescriptor) -> std::result::Result<DeviceDescriptor, DescriptorError> {
     let keys = match raw.caps.keys {
         KeysField::RangeSyntax(syntax) => {
+            let reason = if syntax.contains("..") {
+                "range syntax is rejected"
+            } else {
+                "caps.keys must be a literal array"
+            };
             return Err(DescriptorError::Malformed(format!(
-                "range syntax is rejected; use a literal key array, got {syntax:?}"
+                "{reason}; use a literal key array, got {syntax:?}"
             )));
         }
         KeysField::Literals(keys) => keys,
