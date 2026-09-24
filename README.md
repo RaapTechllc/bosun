@@ -15,7 +15,7 @@ AC-R1 measured **fail both** (0 reports with LGS running and with LCore stopped)
 - Do not consult or copy GPL G13 driver source. The measured protocol is documented in `docs/BOSUN-PLAN.md`.
 - Logitech Gaming Software may overwrite LCD/RGB output.
 
-See `AGENTS.md`, `docs/PLAN-REVIEW.md`, and `docs/BOSUN-PLAN.md` before implementing. The product requirements, M1 acceptance criteria, and open owner decisions are in `docs/PRD.md`.
+See `AGENTS.md`, `docs/PLAN-REVIEW.md`, and `docs/BOSUN-PLAN.md` before implementing. The product requirements, M1 acceptance criteria, and open owner decisions are in `docs/PRD.md`. Post-M1 profile brainstorm (Windows-Omarchy, Omarchy, Codex, Grokbot/agent, master-prompt) lives in `docs/PROFILE-CONCEPTS.md`.
 
 ## CLI
 
