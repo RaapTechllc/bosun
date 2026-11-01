@@ -6,7 +6,7 @@ Bosun turns the Logitech G13 into a cross-platform command console for AI coding
 
 Phase 0 is complete on live Windows hardware. M1 software paths are mockable: a synchronous HID transport, a G13 TOML descriptor and codec, `MockTransport`, and `bosunctl device list|info|watch|record|rgb|leds|lcd test`.
 
-AC-R1 measured **fail both** (0 reports with LGS running and with LCore stopped) on 2026-09-20; details in `docs/hardware-notes.md`. Per `docs/PRD.md` AC-R1 / R1, **fail both stops M1** for Kyle's review — no HID redesign hop from this potato.
+AC-R1 measured **fail both** (0 reports with LGS running and with LCore stopped) on 2026-09-20; details in `docs/hardware-notes.md`. Per `docs/PRD.md` AC-R1 / R1, agents decide the next step within the locked HID-stack constraints and proceed; note assumptions in the PR.
 
 ## Non-negotiable boundaries
 
