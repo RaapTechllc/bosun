@@ -523,16 +523,19 @@ pub fn rgb<T: Transport>(
     transport
         .send_feature_report(&report)
         .context("could not send RGB feature report")?;
-    let mut readback = [0u8; 5];
-    readback[0] = RGB_REPORT_ID;
-    let len = transport
-        .get_feature_report(&mut readback)
+    let readback = read_feature_report(transport, RGB_REPORT_ID)
         .context("could not read RGB feature report")?;
+    // Windows may hand back the report zero-padded to the collection's
+    // longest feature report; the RGB report itself is the first 5 bytes.
+    let shown = &readback[..readback.len().min(report.len())];
+    let verdict = if readback.get(1..4) == Some(&report[1..4]) {
+        "matches"
+    } else {
+        "differs"
+    };
     writeln!(
         out,
-        "rgb sent {:02x?} readback {:02x?}",
-        report,
-        &readback[..len]
+        "rgb sent {report:02x?} readback {shown:02x?} ({verdict})"
     )?;
     Ok(())
 }
@@ -559,6 +562,28 @@ pub fn lcd_test<T: Transport>(transport: &mut T, out: &mut impl Write) -> Result
         .context("could not write LCD test report")?;
     writeln!(out, "lcd test wrote {written} bytes report={}", report[0])?;
     Ok(())
+}
+
+/// Feature-read buffer length.
+///
+/// On Windows a get-feature buffer has to cover the collection's longest
+/// feature report (`FeatureReportByteLength`: 258 bytes on the device
+/// measured in docs/BOSUN-PLAN.md §2.4, because of feature report 6), not
+/// just the report requested. `hidapi` pads feature *sends* to that length
+/// but passes *get* buffers through unchanged, and documents that a get
+/// buffer may be longer than the report, so read generously on every OS.
+const FEATURE_READ_LEN: usize = 1024;
+
+/// Read one feature report into a buffer long enough for any platform.
+pub(crate) fn read_feature_report<T: Transport>(
+    transport: &mut T,
+    report_id: u8,
+) -> bosun_hid::Result<Vec<u8>> {
+    let mut buf = vec![0u8; FEATURE_READ_LEN];
+    buf[0] = report_id;
+    let len = transport.get_feature_report(&mut buf)?;
+    buf.truncate(len);
+    Ok(buf)
 }
 
 /// Lowercase space-separated hex, the same shape as a recorded fixture line.
@@ -811,6 +836,33 @@ mod tests {
         );
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("readback"), "{text}");
+    }
+
+    #[test]
+    fn rgb_readback_buffer_covers_the_longest_feature_report() {
+        // Windows sizes feature reads by the collection's longest feature
+        // report (FeatureReportByteLength: 258 bytes on the measured device),
+        // not by the 5 bytes of report 7. A 5-byte buffer cannot take that.
+        let mut padded = vec![0u8; 258];
+        padded[..5].copy_from_slice(&[0x07, 0x10, 0x20, 0x30, 0x00]);
+        let mut transport = mock().push_feature_report(&padded);
+        let mut out = Vec::new();
+        rgb(&mut transport, 0x10, 0x20, 0x30, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(
+            text.trim_end(),
+            "rgb sent [07, 10, 20, 30, 00] readback [07, 10, 20, 30, 00] (matches)"
+        );
+    }
+
+    #[test]
+    fn rgb_says_when_the_readback_differs() {
+        // e.g. LGS repainted the backlight between the write and the read.
+        let mut transport = mock().push_feature_report(&[0x07, 0x00, 0xFF, 0x00, 0x00]);
+        let mut out = Vec::new();
+        rgb(&mut transport, 0xFF, 0x00, 0x00, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("(differs)"), "{text}");
     }
 
     #[test]
