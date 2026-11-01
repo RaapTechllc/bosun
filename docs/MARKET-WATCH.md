@@ -2,7 +2,7 @@
 
 This is the standing intake process for user complaints, fixes, and interaction ideas from Codex Micro, ChatGPT/Codex desktop, Work Louder Creator Micro 2, and adjacent agent controllers.
 
-The evidence baseline is [`CODEX-MICRO-COMPLAINTS.md`](CODEX-MICRO-COMPLAINTS.md). New signals are advisory until Kyle explicitly promotes them. A review never expands the current milestone silently; M1 remains G13 transport and hardware verification.
+The evidence baseline is [`CODEX-MICRO-COMPLAINTS.md`](CODEX-MICRO-COMPLAINTS.md). Agents assign each new signal's disposition themselves and note assumptions in the PR. A review never expands the current milestone silently; M1 remains G13 transport and hardware verification.
 
 ## Cadence
 
@@ -54,7 +54,7 @@ Dedupe against the baseline brief and prior market-signal issues. A changed stat
 
 - `watch`: retain evidence; no implementation work.
 - `issue`: create a scoped backlog item only when the behavior maps to an accepted milestone and has a checkable acceptance condition.
-- `plan-change`: show Kyle the exact old/new scope, evidence, cost, and rollback, then stop for approval.
+- `plan-change`: decide and proceed on a branch/draft PR; state the exact old/new scope, evidence, cost, rollback, and assumptions in the PR.
 - A single anecdote can motivate a test hypothesis, but not a product claim.
 - Locked decisions in `docs/BOSUN-PLAN.md` are not reopened by popularity alone.
 
