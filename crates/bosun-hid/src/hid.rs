@@ -101,6 +101,16 @@ impl Transport for HidTransport {
     fn get_feature_report(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.device.get_feature_report(buf).map_err(backend_error)
     }
+
+    fn get_input_report(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.device.get_input_report(buf).map_err(backend_error)
+    }
+
+    fn get_report_descriptor(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.device
+            .get_report_descriptor(buf)
+            .map_err(backend_error)
+    }
 }
 
 /// Flatten a backend error so callers never depend on the `hidapi` types.

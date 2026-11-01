@@ -151,6 +151,27 @@ impl Decoder {
 
         Ok(events)
     }
+
+    /// Release every held key and forget the previous report.
+    ///
+    /// Call this when the device goes away. Nothing can be held on a device
+    /// that is not there, and the first report after a reconnect then starts a
+    /// fresh edge stream: pressed keys emit down and axes emit their value.
+    pub fn release_all(&mut self) -> Vec<InputEvent> {
+        let mut events = Vec::new();
+        if let Some(previous) = self.previous_keys.take() {
+            for (bit, held) in previous.iter().enumerate() {
+                if !*held {
+                    continue;
+                }
+                if let Some(name) = &self.key_by_bit[bit] {
+                    events.push(InputEvent::KeyUp { name: name.clone() });
+                }
+            }
+        }
+        self.previous_axes = None;
+        events
+    }
 }
 
 fn key_bits(report: &[u8]) -> [bool; KEY_BIT_COUNT] {
@@ -332,6 +353,51 @@ mod tests {
             assert!(events.is_empty(), "bit {bit} produced events: {events:?}");
             decoder.decode(&rest()).unwrap();
         }
+    }
+
+    #[test]
+    fn release_all_lifts_every_held_key_and_forgets_the_last_report() {
+        let mut decoder = g13_decoder();
+        let mut g1_and_l1 = load_hex("G1.hex");
+        g1_and_l1[6] |= 1 << 1; // bit 25: L1
+        decoder.decode(&g1_and_l1).unwrap();
+
+        let released = decoder.release_all();
+        assert_eq!(
+            released,
+            [
+                InputEvent::KeyUp { name: "G1".into() },
+                InputEvent::KeyUp { name: "L1".into() },
+            ]
+        );
+
+        // The next report starts a fresh edge stream: axes are reported again
+        // and an unchanged rest report produces no stray key edges.
+        let events = decoder.decode(&rest()).unwrap();
+        assert_eq!(
+            events,
+            [
+                InputEvent::Axis {
+                    name: "stick-x".into(),
+                    value: 0x7F
+                },
+                InputEvent::Axis {
+                    name: "stick-y".into(),
+                    value: 0x7F
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn release_all_ignores_state_flags_and_is_empty_before_any_report() {
+        let mut decoder = g13_decoder();
+        assert!(decoder.release_all().is_empty());
+
+        let mut flags_only = rest();
+        flags_only[5] |= 1 << 7; // bit 23: device state, not a key
+        decoder.decode(&flags_only).unwrap();
+        assert!(decoder.release_all().is_empty());
     }
 
     #[test]

@@ -16,6 +16,10 @@ pub enum HidError {
 
     /// The device went away. Callers that want hot-plug recovery re-enumerate
     /// and re-open rather than retrying on the dead handle.
+    ///
+    /// Only transports that can tell an unplug apart produce this. `hidapi`
+    /// cannot, so a real unplug arrives as [`HidError::Backend`]: treat any
+    /// read error as a dead handle, not just this variant.
     #[error("the device is no longer connected")]
     Disconnected,
 
