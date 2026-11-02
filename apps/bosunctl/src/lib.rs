@@ -1,10 +1,11 @@
 //! `bosunctl` library surface so device commands can run over any [`Transport`].
 
 mod listing;
+pub mod probe;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use bosun_hid::{
@@ -55,6 +56,10 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: LcdCommand,
     },
+    /// Read-only R1 diagnosis: sibling interfaces, report descriptor, a
+    /// feature readback, then interrupt reads vs GET_REPORT polls while you
+    /// press keys.
+    Probe(ProbeArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -144,6 +149,20 @@ pub struct LedsArgs {
     /// LED mask, decimal or 0x-prefixed hex.
     #[arg(value_parser = parse_u8)]
     pub mask: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeArgs {
+    #[command(flatten)]
+    pub io: DeviceIoArgs,
+
+    /// Seconds to watch for input while you press keys and move the stick.
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..=600))]
+    pub seconds: u64,
+
+    /// Skip GET_REPORT polling (escape hatch if the device blocks on it).
+    #[arg(long)]
+    pub no_poll: bool,
 }
 
 /// Parse an 8-bit identifier written in decimal or `0x`-prefixed hex.
@@ -259,8 +278,40 @@ pub fn run(cli: Cli) -> Result<()> {
                 let mut transport = open_live(&descriptor, args.path.as_deref())?;
                 lcd_test(&mut transport, &mut io::stdout())
             }
+            DeviceCommand::Probe(args) => device_probe(&args),
         },
     }
+}
+
+fn device_probe(args: &ProbeArgs) -> Result<()> {
+    let descriptor = load_required_descriptor(&args.io.descriptor)?;
+    let api = HidTransport::api().context("could not initialise the HID backend")?;
+    let criteria = descriptor.match_criteria.device_match();
+    let mut out = io::stdout();
+
+    // The inventory prints before opening: when the open fails, it is the
+    // evidence of what the OS does expose.
+    probe::print_inventory(&HidTransport::enumerate(&api), &criteria, &mut out)?;
+    let mut transport = match args.io.path.as_deref() {
+        Some(path) => HidTransport::open_path(&api, path),
+        None => HidTransport::open(&api, &criteria),
+    }
+    .context("could not open the device")?;
+
+    let options = probe::ProbeOptions {
+        window: Duration::from_secs(args.seconds),
+        poll_interval: Duration::from_millis(50),
+        poll_input_report: !args.no_poll,
+    };
+    let started = Instant::now();
+    probe::probe(
+        &mut transport,
+        &descriptor,
+        &options,
+        || started.elapsed(),
+        &mut out,
+    )?;
+    Ok(())
 }
 
 fn load_required_descriptor(path: &Path) -> Result<DeviceDescriptor> {
@@ -744,6 +795,31 @@ mod tests {
                 }
             }
         ));
+    }
+
+    #[test]
+    fn probe_parses_with_a_bounded_window_and_an_opt_out_of_polling() {
+        match Cli::parse_from(["bosunctl", "device", "probe"]).command {
+            Command::Device {
+                command: DeviceCommand::Probe(args),
+            } => {
+                assert_eq!(args.seconds, 20);
+                assert!(!args.no_poll);
+            }
+            other => panic!("{other:?}"),
+        }
+        match Cli::parse_from(["bosunctl", "device", "probe", "--seconds", "5", "--no-poll"])
+            .command
+        {
+            Command::Device {
+                command: DeviceCommand::Probe(args),
+            } => {
+                assert_eq!(args.seconds, 5);
+                assert!(args.no_poll);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(Cli::try_parse_from(["bosunctl", "device", "probe", "--seconds", "0"]).is_err());
     }
 
     #[test]
