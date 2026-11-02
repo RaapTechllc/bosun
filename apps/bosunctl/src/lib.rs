@@ -431,6 +431,9 @@ where
                 }
             },
             Err(error) => {
+                // Let go of the dead handle before waiting, so the OS can
+                // tear the removed device down while it is unplugged.
+                drop(transport);
                 writeln!(out, "disconnected: {error}")?;
                 if print_events(out, &decoder.release_all(), &mut printed, limits.max_events)? {
                     return Ok(());
@@ -546,6 +549,7 @@ where
                 }
             }
             Err(error) => {
+                drop(transport);
                 writeln!(out, "# disconnected: {error}")?;
                 let reopened = reopen(&mut opener, reconnect, |reason| {
                     writeln!(out, "# waiting: {reason}")
@@ -652,7 +656,9 @@ mod tests {
 
     use bosun_hid::{load_descriptor, parse_recorded_reports, DeviceInfo, MockTransport};
     use clap::CommandFactory;
+    use std::cell::Cell;
     use std::io::Cursor;
+    use std::rc::Rc;
     use std::time::Instant;
 
     fn g13() -> DeviceDescriptor {
@@ -1172,6 +1178,104 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("key G1 down"), "{text}");
+    }
+
+    /// Wraps a mock and records when it is dropped.
+    struct DropFlag {
+        inner: MockTransport,
+        dropped: Rc<Cell<bool>>,
+    }
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.dropped.set(true);
+        }
+    }
+
+    impl Transport for DropFlag {
+        fn info(&self) -> &DeviceInfo {
+            self.inner.info()
+        }
+        fn read(&mut self, buf: &mut [u8], timeout: Duration) -> bosun_hid::Result<ReadOutcome> {
+            self.inner.read(buf, timeout)
+        }
+        fn write(&mut self, data: &[u8]) -> bosun_hid::Result<usize> {
+            self.inner.write(data)
+        }
+        fn send_feature_report(&mut self, data: &[u8]) -> bosun_hid::Result<()> {
+            self.inner.send_feature_report(data)
+        }
+        fn get_feature_report(&mut self, buf: &mut [u8]) -> bosun_hid::Result<usize> {
+            self.inner.get_feature_report(buf)
+        }
+        fn get_input_report(&mut self, buf: &mut [u8]) -> bosun_hid::Result<usize> {
+            self.inner.get_input_report(buf)
+        }
+        fn get_report_descriptor(&mut self, buf: &mut [u8]) -> bosun_hid::Result<usize> {
+            self.inner.get_report_descriptor(buf)
+        }
+    }
+
+    // A handle to a removed device, held while waiting for the replug, can
+    // keep the OS from tearing the old device down. Both loops must let go of
+    // it before the first reopen attempt.
+
+    #[test]
+    fn watch_releases_the_dead_handle_before_reopening() {
+        let first_dropped = Rc::new(Cell::new(false));
+        let mut dropped_when_reopening = None;
+        let mut opens = 0u8;
+        let mut decoder = Decoder::from_descriptor(&g13()).unwrap();
+        watch_events(
+            || {
+                opens += 1;
+                if opens == 1 {
+                    return Ok(DropFlag {
+                        inner: mock().push_error(UNPLUG),
+                        dropped: Rc::clone(&first_dropped),
+                    });
+                }
+                dropped_when_reopening = Some(first_dropped.get());
+                Ok(DropFlag {
+                    inner: mock().push_report(&g1_report()),
+                    dropped: Rc::new(Cell::new(false)),
+                })
+            },
+            &mut decoder,
+            &mut io::sink(),
+            &limits(3),
+        )
+        .unwrap();
+        assert_eq!(dropped_when_reopening, Some(true));
+    }
+
+    #[test]
+    fn record_releases_the_dead_handle_before_reopening() {
+        let first_dropped = Rc::new(Cell::new(false));
+        let mut dropped_when_reopening = None;
+        let mut opens = 0u8;
+        record_reports(
+            || {
+                opens += 1;
+                if opens == 1 {
+                    return Ok(DropFlag {
+                        inner: mock().push_error(UNPLUG),
+                        dropped: Rc::clone(&first_dropped),
+                    });
+                }
+                dropped_when_reopening = Some(first_dropped.get());
+                Ok(DropFlag {
+                    inner: mock().push_report(&g1_report()),
+                    dropped: Rc::new(Cell::new(false)),
+                })
+            },
+            &mut io::sink(),
+            Some(1),
+            Duration::from_millis(1),
+            &quick_reconnect(1),
+        )
+        .unwrap();
+        assert_eq!(dropped_when_reopening, Some(true));
     }
 
     #[test]
