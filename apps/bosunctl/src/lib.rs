@@ -182,7 +182,7 @@ const READ_BUFFER_LEN: usize = 64;
 /// How `watch` and `record` ride out an unplug.
 #[derive(Clone, Debug)]
 pub struct ReconnectPolicy {
-    /// Pause between attempts to reopen a device that went away.
+    /// Pause before each attempt to reopen a device that went away.
     pub interval: Duration,
     /// Give up after this many consecutive failed attempts; `None` waits for
     /// a replug indefinitely.
@@ -411,6 +411,7 @@ where
     W: Write,
 {
     let mut transport = opener().context("could not open the device")?;
+    let mut health = HandleHealth::default();
     let mut printed = 0usize;
     let mut buf = [0u8; READ_BUFFER_LEN];
 
@@ -419,9 +420,45 @@ where
             return Ok(());
         }
 
-        let events = match transport.read(&mut buf, limits.read_timeout) {
-            Ok(ReadOutcome::Timeout) => continue,
-            Ok(ReadOutcome::Report(len)) => match decoder.decode(&buf[..len]) {
+        let outcome = match transport.read(&mut buf, limits.read_timeout) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // Let go of the dead handle before waiting, so the OS can
+                // tear the removed device down while it is unplugged.
+                drop(transport);
+                match health.read_failed() {
+                    Some(ReadFailure::Disconnected) => {
+                        writeln!(out, "disconnected: {error}")?;
+                        let released = decoder.release_all();
+                        if print_events(out, &released, &mut printed, limits.max_events)? {
+                            return Ok(());
+                        }
+                    }
+                    Some(ReadFailure::NeverRead) => writeln!(out, "read failed: {error}")?,
+                    None => return Err(unreadable(error)),
+                }
+                let reopened = reopen(&mut opener, &limits.reconnect, |reason| {
+                    writeln!(out, "waiting: {reason}")
+                })?;
+                match reopened {
+                    Some(next) => {
+                        transport = next;
+                        health.reopened();
+                        continue;
+                    }
+                    None => return Ok(()),
+                }
+            }
+        };
+
+        // Announced at the first good read, not at the open: a handle that
+        // opens but cannot be read has not reconnected anything.
+        if health.read_ok() {
+            writeln!(out, "reconnect")?;
+        }
+        let events = match outcome {
+            ReadOutcome::Timeout => continue,
+            ReadOutcome::Report(len) => match decoder.decode(&buf[..len]) {
                 Ok(events) => events,
                 Err(error) => {
                     // Never drop a report silently: an unexpected shape is
@@ -430,26 +467,6 @@ where
                     continue;
                 }
             },
-            Err(error) => {
-                // Let go of the dead handle before waiting, so the OS can
-                // tear the removed device down while it is unplugged.
-                drop(transport);
-                writeln!(out, "disconnected: {error}")?;
-                if print_events(out, &decoder.release_all(), &mut printed, limits.max_events)? {
-                    return Ok(());
-                }
-                let reopened = reopen(&mut opener, &limits.reconnect, |reason| {
-                    writeln!(out, "waiting: {reason}")
-                })?;
-                match reopened {
-                    Some(next) => {
-                        transport = next;
-                        writeln!(out, "reconnect")?;
-                        continue;
-                    }
-                    None => return Ok(()),
-                }
-            }
         };
 
         if print_events(out, &events, &mut printed, limits.max_events)? {
@@ -477,9 +494,11 @@ fn print_events(
 
 /// Reopen a device whose handle died, waiting out an unplug.
 ///
-/// `waiting` hears each distinct reopen failure once, so a long unplug costs
-/// one line rather than one per attempt. Returns `None` after
-/// `policy.max_attempts` consecutive failures.
+/// Every attempt, the first included, waits `policy.interval` first, so no
+/// failure mode can turn the reconnect loop into a busy spin. `waiting` hears
+/// each distinct reopen failure once, so a long unplug costs one line rather
+/// than one per attempt. Returns `None` after `policy.max_attempts`
+/// consecutive failures.
 fn reopen<T, F>(
     opener: &mut F,
     policy: &ReconnectPolicy,
@@ -491,6 +510,7 @@ where
     let mut failures = 0usize;
     let mut last_reason: Option<String> = None;
     loop {
+        std::thread::sleep(policy.interval);
         match opener() {
             Ok(transport) => return Ok(Some(transport)),
             Err(error) => {
@@ -503,10 +523,75 @@ where
                 if policy.max_attempts.is_some_and(|max| failures >= max) {
                     return Ok(None);
                 }
-                std::thread::sleep(policy.interval);
             }
         }
     }
+}
+
+/// Handles in a row whose first read failed before `watch` or `record` gives up.
+const MAX_NEVER_READ: usize = 3;
+
+/// What a failed read says about the handle it failed on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadFailure {
+    /// A handle that had been reading died: an unplug, or the OS dropping it.
+    Disconnected,
+    /// A fresh handle failed before any read succeeded.
+    NeverRead,
+}
+
+/// Tells an unplug apart from a device that opens but cannot be read.
+///
+/// An unplug always kills a handle that was reading. On Windows, though,
+/// `hidapi` falls back to a no-access handle when it cannot open read/write
+/// (another program holds the device exclusively, or the OS reserves the
+/// collection): the open succeeds and every read fails at once. Reopening
+/// that forever would never end, so it becomes an error after
+/// [`MAX_NEVER_READ`] such handles in a row.
+#[derive(Debug, Default)]
+struct HandleHealth {
+    /// The current handle has completed a read.
+    delivered: bool,
+    /// The current handle replaced a dead one and has not read yet.
+    reconnecting: bool,
+    /// Consecutive handles whose first read failed.
+    never_read: usize,
+}
+
+impl HandleHealth {
+    /// Note a successful read. True exactly once per reopened handle, at its
+    /// first good read: the moment to announce the reconnect.
+    fn read_ok(&mut self) -> bool {
+        if self.delivered {
+            return false;
+        }
+        self.delivered = true;
+        self.never_read = 0;
+        std::mem::take(&mut self.reconnecting)
+    }
+
+    /// Classify a failed read; `None` means give up.
+    fn read_failed(&mut self) -> Option<ReadFailure> {
+        if self.delivered {
+            return Some(ReadFailure::Disconnected);
+        }
+        self.never_read += 1;
+        (self.never_read < MAX_NEVER_READ).then_some(ReadFailure::NeverRead)
+    }
+
+    /// A replacement handle was opened.
+    fn reopened(&mut self) {
+        self.delivered = false;
+        self.reconnecting = true;
+    }
+}
+
+/// The error for a device that keeps opening but cannot be read.
+fn unreadable(error: HidError) -> anyhow::Error {
+    anyhow::Error::new(error).context(format!(
+        "the device opened {MAX_NEVER_READ} times in a row but its first read failed each \
+         time; another program may hold it exclusively, or the OS reserves this collection"
+    ))
 }
 
 /// Write raw 8-byte reports as fixture lines, riding out unplugs.
@@ -528,6 +613,7 @@ where
     W: Write,
 {
     let mut transport = opener().context("could not open the device")?;
+    let mut health = HandleHealth::default();
     let mut written = 0usize;
     let mut buf = [0u8; READ_BUFFER_LEN];
 
@@ -536,31 +622,40 @@ where
             return Ok(written);
         }
 
-        match transport.read(&mut buf, read_timeout) {
-            Ok(ReadOutcome::Timeout) => {}
-            Ok(ReadOutcome::Report(len)) => {
-                let report = &buf[..len];
-                match <[u8; INPUT_REPORT_LEN]>::try_from(report) {
-                    Ok(fixture) => {
-                        writeln!(out, "{}", format_recorded_report(&fixture))?;
-                        written += 1;
-                    }
-                    Err(_) => writeln!(out, "# unexpected {len}-byte report: {}", hex(report))?,
-                }
-            }
+        let outcome = match transport.read(&mut buf, read_timeout) {
+            Ok(outcome) => outcome,
             Err(error) => {
                 drop(transport);
-                writeln!(out, "# disconnected: {error}")?;
+                match health.read_failed() {
+                    Some(ReadFailure::Disconnected) => writeln!(out, "# disconnected: {error}")?,
+                    Some(ReadFailure::NeverRead) => writeln!(out, "# read failed: {error}")?,
+                    None => return Err(unreadable(error)),
+                }
                 let reopened = reopen(&mut opener, reconnect, |reason| {
                     writeln!(out, "# waiting: {reason}")
                 })?;
                 match reopened {
                     Some(next) => {
                         transport = next;
-                        writeln!(out, "# reconnect")?;
+                        health.reopened();
+                        continue;
                     }
                     None => return Ok(written),
                 }
+            }
+        };
+
+        if health.read_ok() {
+            writeln!(out, "# reconnect")?;
+        }
+        if let ReadOutcome::Report(len) = outcome {
+            let report = &buf[..len];
+            match <[u8; INPUT_REPORT_LEN]>::try_from(report) {
+                Ok(fixture) => {
+                    writeln!(out, "{}", format_recorded_report(&fixture))?;
+                    written += 1;
+                }
+                Err(_) => writeln!(out, "# unexpected {len}-byte report: {}", hex(report))?,
             }
         }
     }
@@ -1007,7 +1102,8 @@ mod tests {
             || {
                 opens += 1;
                 match opens {
-                    1 => Ok(mock().push_disconnect()),
+                    // A working handle (one quiet read), then the device goes.
+                    1 => Ok(mock().push_timeout().push_disconnect()),
                     _ => Ok(mock().push_report(&g1_report())),
                 }
             },
@@ -1018,6 +1114,10 @@ mod tests {
         .unwrap();
         let elapsed = started.elapsed();
         let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("disconnected: the device is no longer connected"),
+            "{text}"
+        );
         assert!(text.contains("reconnect"), "{text}");
         assert_eq!(text.matches("reconnect").count(), 1, "{text}");
         assert!(text.contains("key G1 down"), "{text}");
@@ -1035,7 +1135,7 @@ mod tests {
             || {
                 opens += 1;
                 match opens {
-                    1 => Ok(mock().push_error(UNPLUG)),
+                    1 => Ok(mock().push_timeout().push_error(UNPLUG)),
                     _ => Ok(mock().push_report(&g1_report())),
                 }
             },
@@ -1067,7 +1167,7 @@ mod tests {
             || {
                 opens += 1;
                 match opens {
-                    1 => Ok(mock().push_error(UNPLUG)),
+                    1 => Ok(mock().push_timeout().push_error(UNPLUG)),
                     2..=4 => Err(HidError::NotFound(g13().match_criteria.device_match())),
                     _ => Ok(mock().push_report(&g1_report())),
                 }
@@ -1103,7 +1203,7 @@ mod tests {
             || {
                 opens += 1;
                 if opens == 1 {
-                    Ok(mock().push_error(UNPLUG))
+                    Ok(mock().push_timeout().push_error(UNPLUG))
                 } else {
                     Err(HidError::NotFound(criteria))
                 }
@@ -1231,7 +1331,7 @@ mod tests {
                 opens += 1;
                 if opens == 1 {
                     return Ok(DropFlag {
-                        inner: mock().push_error(UNPLUG),
+                        inner: mock().push_timeout().push_error(UNPLUG),
                         dropped: Rc::clone(&first_dropped),
                     });
                 }
@@ -1259,7 +1359,7 @@ mod tests {
                 opens += 1;
                 if opens == 1 {
                     return Ok(DropFlag {
-                        inner: mock().push_error(UNPLUG),
+                        inner: mock().push_timeout().push_error(UNPLUG),
                         dropped: Rc::clone(&first_dropped),
                     });
                 }
@@ -1276,6 +1376,150 @@ mod tests {
         )
         .unwrap();
         assert_eq!(dropped_when_reopening, Some(true));
+    }
+
+    /// What hidapi on Windows says when it fell back to a no-access handle.
+    const NO_READ_ACCESS: &str = "ReadFile: Access is denied.";
+
+    #[test]
+    fn watch_gives_up_on_a_device_that_opens_but_cannot_be_read() {
+        // On Windows, hidapi falls back to a no-access handle when it cannot
+        // open read/write: the open succeeds and every read fails at once.
+        // Reopening that forever would spin; it is an error instead.
+        let mut decoder = Decoder::from_descriptor(&g13()).unwrap();
+        let mut out = Vec::new();
+        let mut opens = 0u8;
+        let error = watch_events(
+            || {
+                opens += 1;
+                Ok(mock().push_error(NO_READ_ACCESS))
+            },
+            &mut decoder,
+            &mut out,
+            &limits(10),
+        )
+        .expect_err("a device that opens but cannot be read is an error");
+        assert_eq!(opens, 3);
+        assert!(format!("{error:#}").contains(NO_READ_ACCESS), "{error:#}");
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.matches("read failed: ").count(), 2, "{text}");
+        assert!(!text.contains("reconnect"), "{text}");
+    }
+
+    #[test]
+    fn watch_announces_reconnect_only_once_the_new_handle_reads() {
+        let mut decoder = Decoder::from_descriptor(&g13()).unwrap();
+        let mut out = Vec::new();
+        let mut opens = 0u8;
+        watch_events(
+            || {
+                opens += 1;
+                match opens {
+                    1 => Ok(mock().push_timeout().push_error(UNPLUG)),
+                    // Opens, but its first read fails: not reconnected yet.
+                    2 => Ok(mock().push_error(NO_READ_ACCESS)),
+                    _ => Ok(mock().push_report(&g1_report())),
+                }
+            },
+            &mut decoder,
+            &mut out,
+            &limits(3),
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let disconnected = format!("disconnected: HID backend failure: {UNPLUG}");
+        let read_failed = format!("read failed: HID backend failure: {NO_READ_ACCESS}");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                disconnected.as_str(),
+                read_failed.as_str(),
+                "reconnect",
+                "key G1 down",
+                "axis stick-x 127",
+                "axis stick-y 127",
+            ]
+        );
+    }
+
+    #[test]
+    fn record_gives_up_on_a_device_that_opens_but_cannot_be_read() {
+        let mut recorded = Vec::new();
+        let mut opens = 0u8;
+        // No report limit: the live default, which used to append comments
+        // to the capture forever.
+        let error = record_reports(
+            || {
+                opens += 1;
+                Ok(mock().push_error(NO_READ_ACCESS))
+            },
+            &mut recorded,
+            None,
+            Duration::from_millis(1),
+            &quick_reconnect(1),
+        )
+        .expect_err("a device that opens but cannot be read is an error");
+        assert_eq!(opens, 3);
+        assert!(format!("{error:#}").contains(NO_READ_ACCESS), "{error:#}");
+        let text = String::from_utf8(recorded).unwrap();
+        assert_eq!(text.matches("# read failed: ").count(), 2, "{text}");
+        assert!(parse_recorded_reports(&text).unwrap().is_empty());
+    }
+
+    #[test]
+    fn handle_health_tells_an_unplug_from_a_handle_that_never_reads() {
+        let mut health = HandleHealth::default();
+        // The first handle reads, then dies: an unplug. Nothing to announce
+        // on its first read, since it never replaced anything.
+        assert!(!health.read_ok());
+        assert_eq!(health.read_failed(), Some(ReadFailure::Disconnected));
+        // Two replacements fail before reading: keep trying.
+        health.reopened();
+        assert_eq!(health.read_failed(), Some(ReadFailure::NeverRead));
+        health.reopened();
+        assert_eq!(health.read_failed(), Some(ReadFailure::NeverRead));
+        // The third reads: announce the reconnect exactly once, and forgive
+        // the earlier failures.
+        health.reopened();
+        assert!(health.read_ok());
+        assert!(!health.read_ok());
+        assert_eq!(health.read_failed(), Some(ReadFailure::Disconnected));
+    }
+
+    #[test]
+    fn handle_health_gives_up_after_three_handles_that_never_read() {
+        let mut health = HandleHealth::default();
+        assert_eq!(health.read_failed(), Some(ReadFailure::NeverRead));
+        health.reopened();
+        assert_eq!(health.read_failed(), Some(ReadFailure::NeverRead));
+        health.reopened();
+        assert_eq!(health.read_failed(), None);
+    }
+
+    #[test]
+    fn reopen_pauses_before_every_attempt_including_the_first() {
+        // A pause only after failed opens let "open succeeds, read fails"
+        // cycles spin with no pause at all.
+        let policy = ReconnectPolicy {
+            interval: Duration::from_millis(20),
+            max_attempts: Some(2),
+        };
+        let mut attempts = 0u8;
+        let started = Instant::now();
+        let reopened = reopen(
+            &mut || -> bosun_hid::Result<MockTransport> {
+                attempts += 1;
+                Err(HidError::Disconnected)
+            },
+            &policy,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        assert!(reopened.is_none());
+        assert_eq!(attempts, 2);
+        assert!(elapsed >= Duration::from_millis(40), "{elapsed:?}");
     }
 
     #[test]
