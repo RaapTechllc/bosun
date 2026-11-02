@@ -27,3 +27,7 @@ _Avoid_: mask (the incomplete Appendix B mask), filter byte
 **Transport**:
 A synchronous, policy-free HID channel that moves reports. `MockTransport` scripts those reports for tests with no hardware.
 _Avoid_: async HID, exclusive open, libusb backend
+
+**Polled report**:
+An input report fetched on demand over the control pipe (HID `GET_REPORT`), rather than streamed on interrupt IN. In M1 it is diagnostic evidence for `bosunctl device probe` only, not an input path.
+_Avoid_: polling fallback, alternate input path (adopting one is a plan change)

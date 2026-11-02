@@ -8,6 +8,9 @@ use std::time::Duration;
 use crate::device::DeviceInfo;
 use crate::error::Result;
 
+/// A buffer this long holds any report descriptor the HID backends return.
+pub const MAX_REPORT_DESCRIPTOR_LEN: usize = 4096;
+
 /// The result of one read attempt.
 ///
 /// Timeouts are a distinct outcome rather than a zero-length report, so a
@@ -37,6 +40,16 @@ pub trait Transport {
 
     /// Read one feature report. `buf[0]` must hold the requested report ID.
     fn get_feature_report(&mut self, buf: &mut [u8]) -> Result<usize>;
+
+    /// Poll the current state of one input report over the control pipe
+    /// (HID `GET_REPORT`), independently of the interrupt stream that
+    /// [`read`](Transport::read) consumes. `buf[0]` must hold the requested
+    /// report ID; the buffer may be longer than the report.
+    fn get_input_report(&mut self, buf: &mut [u8]) -> Result<usize>;
+
+    /// Copy the interface's HID report descriptor into `buf`. A buffer of
+    /// [`MAX_REPORT_DESCRIPTOR_LEN`] bytes always suffices.
+    fn get_report_descriptor(&mut self, buf: &mut [u8]) -> Result<usize>;
 }
 
 /// Clamp a timeout to the non-negative millisecond range the HID backend takes.

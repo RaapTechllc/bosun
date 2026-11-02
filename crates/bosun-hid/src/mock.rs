@@ -17,6 +17,9 @@ pub enum ScriptedRead {
     Timeout,
     /// Report that the device went away.
     Disconnect,
+    /// Fail with an opaque backend error, which is how `hidapi` reports a
+    /// physical unplug on every OS.
+    Error(String),
 }
 
 /// A [`Transport`] that replays a script and records everything written to it.
@@ -29,6 +32,8 @@ pub struct MockTransport {
     info: DeviceInfo,
     reads: VecDeque<ScriptedRead>,
     feature_reads: VecDeque<Vec<u8>>,
+    input_report_polls: VecDeque<std::result::Result<Vec<u8>, String>>,
+    report_descriptor: Option<Vec<u8>>,
     writes: Vec<Vec<u8>>,
     feature_writes: Vec<Vec<u8>>,
 }
@@ -39,6 +44,8 @@ impl MockTransport {
             info,
             reads: VecDeque::new(),
             feature_reads: VecDeque::new(),
+            input_report_polls: VecDeque::new(),
+            report_descriptor: None,
             writes: Vec::new(),
             feature_writes: Vec::new(),
         }
@@ -65,10 +72,46 @@ impl MockTransport {
         self
     }
 
+    /// Queue a read that fails the way a real unplug does: an opaque backend
+    /// error rather than [`HidError::Disconnected`].
+    #[must_use]
+    pub fn push_error(mut self, message: &str) -> Self {
+        self.reads
+            .push_back(ScriptedRead::Error(message.to_owned()));
+        self
+    }
+
     /// Queue the payload a [`Transport::get_feature_report`] call will return.
     #[must_use]
     pub fn push_feature_report(mut self, report: &[u8]) -> Self {
         self.feature_reads.push_back(report.to_vec());
+        self
+    }
+
+    /// Queue the answer to one [`Transport::get_input_report`] poll.
+    ///
+    /// Polls are their own script, separate from the interrupt reads queued by
+    /// [`push_report`](Self::push_report): a device can answer one channel and
+    /// stay silent on the other.
+    #[must_use]
+    pub fn push_input_report(mut self, report: &[u8]) -> Self {
+        self.input_report_polls.push_back(Ok(report.to_vec()));
+        self
+    }
+
+    /// Queue a [`Transport::get_input_report`] poll that fails with a backend
+    /// error, e.g. a device that stalls `GET_REPORT`.
+    #[must_use]
+    pub fn push_input_report_error(mut self, message: &str) -> Self {
+        self.input_report_polls.push_back(Err(message.to_owned()));
+        self
+    }
+
+    /// Serve this report descriptor from [`Transport::get_report_descriptor`].
+    /// Without one, the call fails as an unsupported backend would.
+    #[must_use]
+    pub fn with_report_descriptor(mut self, descriptor: &[u8]) -> Self {
+        self.report_descriptor = Some(descriptor.to_vec());
         self
     }
 
@@ -96,6 +139,7 @@ impl Transport for MockTransport {
     fn read(&mut self, buf: &mut [u8], _timeout: Duration) -> Result<ReadOutcome> {
         match self.reads.pop_front() {
             None | Some(ScriptedRead::Disconnect) => Err(HidError::Disconnected),
+            Some(ScriptedRead::Error(message)) => Err(HidError::Backend(message)),
             Some(ScriptedRead::Timeout) => Ok(ReadOutcome::Timeout),
             Some(ScriptedRead::Report(report)) => {
                 copy_report(&report, buf).map(ReadOutcome::Report)
@@ -119,6 +163,23 @@ impl Transport for MockTransport {
             .pop_front()
             .ok_or(HidError::Disconnected)?;
         copy_report(&report, buf)
+    }
+
+    fn get_input_report(&mut self, buf: &mut [u8]) -> Result<usize> {
+        match self.input_report_polls.pop_front() {
+            None => Err(HidError::Disconnected),
+            Some(Err(message)) => Err(HidError::Backend(message)),
+            Some(Ok(report)) => copy_report(&report, buf),
+        }
+    }
+
+    fn get_report_descriptor(&mut self, buf: &mut [u8]) -> Result<usize> {
+        match &self.report_descriptor {
+            Some(descriptor) => copy_report(descriptor, buf),
+            None => Err(HidError::Backend(
+                "this transport has no report descriptor".to_owned(),
+            )),
+        }
     }
 }
 
@@ -274,6 +335,69 @@ mod tests {
 
         // The input script is untouched by feature traffic.
         assert_eq!(transport.reads_remaining(), 1);
+    }
+
+    #[test]
+    fn a_scripted_backend_error_fails_the_read_like_a_real_unplug() {
+        // hidapi reports a pulled cable as an opaque error on every OS, never
+        // as `Disconnected`; the mock has to be able to say the same thing.
+        let mut transport = mock()
+            .push_error("hid_read_timeout: unexpected poll error (device disconnected)")
+            .push_report(&[0x01, 0xAA]);
+        let mut buf = [0u8; 8];
+
+        match transport.read(&mut buf, TIMEOUT) {
+            Err(HidError::Backend(message)) => assert!(message.contains("disconnected")),
+            other => panic!("expected a backend error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn input_report_polls_are_scripted_independently_of_interrupt_reads() {
+        let mut transport = mock()
+            .push_report(&[0x01, 0xAA])
+            .push_input_report(&[0x01, 0xBB, 0xCC]);
+        let mut buf = [0u8; 8];
+        buf[0] = 0x01;
+
+        assert_eq!(transport.get_input_report(&mut buf).unwrap(), 3);
+        assert_eq!(&buf[..3], &[0x01, 0xBB, 0xCC]);
+        // The interrupt script is untouched by polling.
+        assert_eq!(transport.reads_remaining(), 1);
+        assert!(matches!(
+            transport.get_input_report(&mut buf),
+            Err(HidError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn a_scripted_poll_error_surfaces_as_a_backend_error() {
+        let mut transport = mock()
+            .push_input_report_error("GET_REPORT stalled")
+            .push_input_report(&[0x01]);
+        let mut buf = [0u8; 8];
+
+        assert!(matches!(
+            transport.get_input_report(&mut buf),
+            Err(HidError::Backend(message)) if message == "GET_REPORT stalled"
+        ));
+        assert_eq!(transport.get_input_report(&mut buf).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_report_descriptor_is_served_only_when_scripted() {
+        let mut buf = [0u8; 16];
+
+        assert!(matches!(
+            mock().get_report_descriptor(&mut buf),
+            Err(HidError::Backend(_))
+        ));
+
+        let mut transport = mock().with_report_descriptor(&[0x06, 0x00, 0xFF]);
+        assert_eq!(transport.get_report_descriptor(&mut buf).unwrap(), 3);
+        assert_eq!(&buf[..3], &[0x06, 0x00, 0xFF]);
+        // Served again: a descriptor is a property, not a queue.
+        assert_eq!(transport.get_report_descriptor(&mut buf).unwrap(), 3);
     }
 
     #[test]
