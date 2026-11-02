@@ -90,6 +90,9 @@ impl InputEvidence {
             Verdict::InterruptUndecoded
         } else if self.polled_changes > 0 || !self.polled_keys.is_empty() {
             Verdict::PolledOnly
+        } else if self.read_error.is_some() {
+            // Nothing seen and the window cut short: no observation was made.
+            Verdict::ReadFailed
         } else if self.polls_ok > 0 {
             Verdict::PolledStatic
         } else {
@@ -109,6 +112,8 @@ pub enum Verdict {
     PolledOnly,
     /// The interrupt stream was silent and polled state never changed.
     PolledStatic,
+    /// The interrupt read failed before any input was seen.
+    ReadFailed,
     /// Nothing on either channel.
     Silent,
 }
@@ -121,6 +126,7 @@ impl Verdict {
             Self::InterruptUndecoded => "interrupt-undecoded",
             Self::PolledOnly => "polled-only",
             Self::PolledStatic => "polled-static",
+            Self::ReadFailed => "read-failed",
             Self::Silent => "silent",
         }
     }
@@ -146,6 +152,13 @@ impl Verdict {
             Self::PolledStatic => {
                 "GET_REPORT answers, but its state never changed, so there is no evidence \
                  that a key was pressed. Rerun while pressing keys and moving the stick."
+            }
+            Self::ReadFailed => {
+                "The interrupt read failed before any input was seen, so neither channel \
+                 was observed. This is not an AC-R1 result. Fix the error above and rerun. \
+                 On Windows, a read that fails at once usually means the interface opened \
+                 without read access: another program holds it exclusively, or the OS \
+                 reserves the collection."
             }
             Self::Silent => {
                 "No input on either channel. If LGS is running, quit it (LCore.exe) and \
@@ -675,6 +688,9 @@ mod tests {
             0,
             "no poll after the read failed"
         );
+        // Nothing was observed on either channel: not an AC-R1 "silent".
+        assert_eq!(evidence.verdict(), Verdict::ReadFailed, "{text}");
+        assert!(text.contains("verdict: read-failed"), "{text}");
         assert!(
             text.contains("interrupt read failed, ending the window"),
             "{text}"
@@ -683,6 +699,19 @@ mod tests {
             text.contains(&format!("window ended early: {expected}")),
             "{text}"
         );
+    }
+
+    #[test]
+    fn input_seen_before_a_read_failure_still_decides_the_verdict() {
+        let mut transport = mock()
+            .push_report(&g1())
+            .push_error(UNPLUG)
+            .push_input_report(&rest());
+
+        let (evidence, text) = probe_mock(&mut transport, &options(5));
+
+        assert!(evidence.read_error.is_some(), "{text}");
+        assert_eq!(evidence.verdict(), Verdict::InterruptLive, "{text}");
     }
 
     #[test]

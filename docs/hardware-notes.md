@@ -31,9 +31,10 @@ Run from the repository root (the default descriptor path is relative) after the
 | `interrupt-undecoded` | Reports arrive in a shape other than 8 bytes, ID `0x01` | Not a pass yet; compare the raw lines with `docs/BOSUN-PLAN.md` §2.4 |
 | `polled-only` | `GET_REPORT` returns live key/stick state; the interrupt stream is silent | Fail, with positive evidence that the keys work. Reading input by polling would be a plan change for Kyle |
 | `polled-static` | `GET_REPORT` answers but never changed | Inconclusive; rerun while pressing keys |
+| `read-failed` | The read itself failed before any input was seen (on Windows, usually a handle opened without read access) | Not a result; fix the error and rerun |
 | `silent` | Nothing on either channel | Fail (no positive control on this device) |
 
-The two runs map onto the AC-R1 record. **pass with LGS running** means the first run is `interrupt-live`. **pass only with LGS closed** means only the second is. **fail both** means neither is; attach both summaries. If the probe stalls inside the window, the device is blocking on `GET_REPORT`. Stop it and rerun with `--no-poll`, which still prints the inventory, the report descriptor, and the feature readback.
+The two runs map onto the AC-R1 record. **pass with LGS running** means the first run is `interrupt-live`. **pass only with LGS closed** means only the second is. **fail both** means neither is; attach both summaries. Rerun any `polled-static` or `read-failed` run before recording. If the probe stalls inside the window, the device is blocking on `GET_REPORT`. Stop it and rerun with `--no-poll`, which still prints the inventory, the report descriptor, and the feature readback.
 
 Once input reports arrive:
 
