@@ -19,7 +19,7 @@ Implement **M1 only**. Do not add the engine, adapters, Tauri GUI, HTTP/WS contr
 
 - VID `0x046D`, PID `0xC21C`, usage page `0xFF00`.
 - Input: 8 bytes, report ID `0x01`, joystick at bytes 1–2, key bitmap at bytes 3–7.
-- Keep only key bits `0..=21` and `24..=35`; ignore bits 22, 23, and 36–39. Never copy the incomplete mask from Appendix B.
+- Keep only key bits `0..=21` and `24..=35`; ignore bits 22, 23, and 36–39. Don't copy the incomplete mask from Appendix B.
 - LCD: 992-byte output report ID `0x03`, 31 padding bytes, then 960 framebuffer bytes.
 - LCD packing: `offset = col + (row >> 3) * 160`; `bit = 1 << (row & 7)`. Visible rows are 0–42; rows 43–47 must remain zero.
 - RGB is feature report 7. M1/M2/M3/MR LEDs are feature report 5. Leave feature report 6 alone.
